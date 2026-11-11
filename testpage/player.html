@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Fremder Player</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 16px system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  video { flex: 1; min-height: 0; width: 100%; }
+  #s { padding: 4px 8px; background: #222; }
+</style>
+</head>
+<body>
+<!-- Like video hosters embedded in an iframe: arrow keys are player hotkeys and never move focus. -->
+<video id="v" loop playsinline src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"></video>
+<div id="s">iframe-Player: ▲/▼ Lautstärke, ◀/▶ spulen, OK Play/Pause</div>
+<script>
+  const v = document.getElementById('v'), s = document.getElementById('s');
+  const show = what => {
+    s.textContent = what + ' · Lautstärke ' + Math.round(v.volume * 100) + ' % · ' + v.currentTime.toFixed(1) + ' s';
+    parent.postMessage(s.textContent, '*'); // lets the test read the state from the page
+  };
+  document.addEventListener('keydown', e => {
+    const k = e.key;
+    if (k === 'ArrowUp') v.volume = Math.min(1, v.volume + 0.1);
+    else if (k === 'ArrowDown') v.volume = Math.max(0, v.volume - 0.1);
+    else if (k === 'ArrowLeft') v.currentTime = Math.max(0, v.currentTime - 5);
+    else if (k === 'ArrowRight') v.currentTime += 5;
+    else if (k === 'Enter' || k === ' ') v.paused ? v.play() : v.pause();
+    else return;
+    e.preventDefault();
+    show(k);
+  });
+</script>
+</body>
+</html>

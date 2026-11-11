@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#MISE description="Build web apps from webapps.json and install them on the TV: mise run deploy [id...]"
+set -uo pipefail
+
+cd "${MISE_PROJECT_ROOT:-$(dirname "$0")/..}"
+config=webapps.json
+
+die() { echo "Fehler: $*" >&2; exit 1; }
+
+[[ -f $config ]] || die "$config fehlt: kopiere webapps.example.json nach $config und trage deine Seiten ein."
+jq -e . "$config" >/dev/null 2>&1 || die "$config ist kein gültiges JSON."
+adb_addr=$(jq -r '.adb | strings' "$config")
+[[ -n $adb_addr ]] || die "$config: \"adb\" fehlt, z. B. \"adb\": \"192.0.2.10:5555\""
+all_ids=$(jq -r '.apps[]?.id | strings' "$config")
+[[ -n $all_ids ]] || die "$config: apps fehlt oder ist leer, siehe webapps.example.json"
+
+if (($# > 0)); then
+  ids=("$@")
+  for id in "${ids[@]}"; do
+    grep -qx -- "$id" <<<"$all_ids" || die "unbekannte id \"$id\". Gültig: $(echo $all_ids)"
+  done
+else
+  read -r -d '' -a ids <<<"$all_ids"
+fi
+
+# Domain list: download into a temp file, check it, and only then replace the copy blocklist.txt with mv.
+# Any other "blocklist" value skips the download; Gradle reports it.
+blocklist_url=$(jq -r '.blocklist | strings' "$config")
+if [[ $blocklist_url == http://* || $blocklist_url == https://* ]]; then
+  # Counterpart of BlocklistTask.DOMAIN in app/build.gradle.kts (applied to trimmed, lowercased lines). Change both together.
+  domain_re='[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+'
+  tmp=$(mktemp blocklist.txt.XXXXXX) || die "Temp-Datei für die Blockliste nicht anlegbar."
+  trap 'rm -f "$tmp"' EXIT
+  echo "Lade Blockliste $blocklist_url …"
+  echo "# source: $blocklist_url" >"$tmp"
+  if err=$(curl -fsSL --max-time 60 "$blocklist_url" 2>&1 >>"$tmp"); then
+    count=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "$tmp" | tr '[:upper:]' '[:lower:]' | grep -Ex "$domain_re" | sort -u | wc -l | tr -d ' ')
+    ((count >= 1000)) || err="nur $count Domains, mindestens 1000 nötig"
+  else
+    err=${err:-Download fehlgeschlagen}
+  fi
+  if [[ -z $err ]]; then
+    mv -f "$tmp" blocklist.txt || die "blocklist.txt nicht schreibbar."
+    echo "Blockliste: $count Domains."
+  else
+    rm -f "$tmp"
+    if [[ -f blocklist.txt && $(head -n 1 blocklist.txt) == "# source: $blocklist_url" ]]; then
+      echo "Warnung: Blockliste von $blocklist_url nicht geladen ($err), nehme die alte Kopie blocklist.txt." >&2
+    else
+      die "Blockliste von $blocklist_url nicht geladen ($err), und es gibt keine Kopie blocklist.txt von dieser Adresse."
+    fi
+  fi
+fi
+
+# The TV counts as connected only when get-state says "device".
+connect() {
+  local state
+  state=$(adb -s "$adb_addr" get-state 2>&1 | tr -d '\r')
+  [[ $state == device ]] && return 0
+  adb connect "$adb_addr" >/dev/null 2>&1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    state=$(adb -s "$adb_addr" get-state 2>&1 | tr -d '\r')
+    [[ $state == device ]] && return 0
+    [[ $state == *unauthorized* ]] && break
+    sleep 1
+  done
+  if [[ $state == *unauthorized* ]]; then
+    echo "Fehler: Debugging am TV bestätigen (Dialog „USB-Debugging zulassen“) und erneut starten." >&2
+  else
+    echo "Fehler: TV $adb_addr nicht erreichbar (TV an? ADB-Debugging aktiv?)." >&2
+  fi
+  return 1
+}
+
+connect || exit 1
+
+tasks=()
+for id in "${ids[@]}"; do tasks+=("assembleW${id}Debug"); done
+echo "Baue: ${ids[*]}"
+./gradlew -q "${tasks[@]}" || die "Build fehlgeschlagen."
+
+ok=() failed=()
+for id in "${ids[@]}"; do
+  # Flavor "w<id>" and package "local.tvwebapp.<id>" come from app/build.gradle.kts. Change both together.
+  apk="app/build/outputs/apk/w$id/debug/app-w$id-debug.apk"
+  pkg="local.tvwebapp.$id"
+  echo "Installiere $pkg …"
+  out=$(adb -s "$adb_addr" install -r "$apk" 2>&1)
+  if [[ $out != *Success* && $out != *INSTALL_FAILED* ]]; then
+    # Connection trouble, not an install error: reconnect once and retry.
+    if connect; then out=$(adb -s "$adb_addr" install -r "$apk" 2>&1); fi
+  fi
+  if [[ $out == *Success* ]]; then
+    ok+=("$id")
+  elif [[ $out == *INSTALL_FAILED_UPDATE_INCOMPATIBLE* ]]; then
+    echo "  Signatur passt nicht zur installierten App. Nur von Hand lösen (löscht Logins dieser App):" >&2
+    echo "    adb -s $adb_addr uninstall $pkg" >&2
+    failed+=("$id")
+  else
+    echo "  $(tail -n 3 <<<"$out")" >&2
+    failed+=("$id")
+  fi
+done
+
+echo
+echo "Übersicht:"
+for id in ${ok[@]+"${ok[@]}"}; do echo "  ok      $id"; done
+for id in ${failed[@]+"${failed[@]}"}; do echo "  FEHLER  $id"; done
+
+# Installed web apps that are no longer in the config: list only, never uninstall.
+installed=$(adb -s "$adb_addr" shell pm list packages local.tvwebapp. 2>/dev/null | tr -d '\r' | sed -n 's/^package:local\.tvwebapp\.//p')
+orphans=()
+for id in $installed; do grep -qx -- "$id" <<<"$all_ids" || orphans+=("$id"); done
+if ((${#orphans[@]} > 0)); then
+  echo
+  echo "Auf dem TV, aber nicht mehr in $config (bleiben installiert):"
+  for id in "${orphans[@]}"; do echo "  adb -s $adb_addr uninstall local.tvwebapp.$id"; done
+fi
+
+((${#failed[@]} == 0))

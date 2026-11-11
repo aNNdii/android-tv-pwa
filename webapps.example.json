@@ -1,0 +1,10 @@
+{
+  "adb": "192.0.2.10:5555",
+  "apps": [
+    { "id": "example", "name": "Example", "url": "https://example.org/" },
+    { "id": "examplenews", "name": "Example News", "url": "https://news.example.com/", "color": "#8a1c1c", "zoom": 125,
+      "allowDomains": ["cdn.example.net"] },
+    { "id": "exampledesk", "name": "Example Desktop", "url": "https://example.org/",
+      "color": "#5f1e3a", "cursor": false, "desktopMode": true, "zoom": 150, "blocklist": false }
+  ]
+}

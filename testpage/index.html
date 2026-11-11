@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TV-Web-App Testseite</title>
+<style>
+  body { font: 18px/1.5 system-ui, sans-serif; margin: 24px; background: #111; color: #eee; }
+  h1 { font-size: 28px; margin: 0 0 12px; }
+  .box { border: 1px solid #555; padding: 8px 12px; margin: 8px 0; }
+  code { color: #8cf; word-break: break-all; }
+  a, button { color: #fff; background: #246; border: 0; padding: 8px 14px; margin: 4px; display: inline-block; font-size: 18px; text-decoration: none; }
+  a:hover, button:hover { background: #48c; }
+  /* Like many sites: no own focus outline. The app's focus frame must still show. */
+  :focus { outline: none; }
+  #player { width: 480px; background: #000; }
+  #player video { width: 100%; display: block; }
+  #player:fullscreen { display: flex; flex-direction: column; }
+  #player:fullscreen video { flex: 1; min-height: 0; }
+  .ctl { display: flex; gap: 6px; padding: 6px; background: #222; }
+  .ctl div { background: #444; padding: 6px 12px; cursor: pointer; }
+  input { font-size: 18px; padding: 6px; width: 300px; }
+  #inner { height: 120px; overflow: auto; }
+  .tall { height: 1600px; background: linear-gradient(#111, #353); }
+</style>
+</head>
+<body>
+<h1>Testseite <span id="from"></span></h1>
+
+<div class="box">User-Agent: <code id="ua"></code></div>
+<div class="box">Besuche (Cookie): <b id="cookie"></b> · localStorage: <b id="ls"></b> · history.length: <b id="hist"></b> · Breite: <b id="w"></b> CSS-px</div>
+
+<div class="box">
+  <a href="?from=blank" target="_blank">Link mit target=_blank</a>
+  <button onclick="window.open('?from=open')">window.open per Klick</button>
+  <a href="?autopopup=1">Seite mit Popup ohne Klick (nach 3 s)</a>
+  <span id="popup"></span>
+</div>
+
+<div class="box">
+  <a href="intent://x#Intent;scheme=foo;end">intent:-Link</a>
+  <a href="mailto:test@example.org">mailto:-Link</a>
+  <a href="market://details?id=x">market:-Link</a>
+</div>
+
+<div class="box">Textfeld: <input id="text" placeholder="hier klicken"></div>
+
+<div class="box"><form id="search" action="">Suche im Formular: <input id="q" name="q" type="search">
+  <button>Suchen</button></form></div>
+
+<div class="box">Eigener Player (Knöpfe sind div ohne Fokus, wie auf vielen Seiten): <b id="pstate">–</b>
+  <div id="player">
+    <video id="pv" loop playsinline src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"></video>
+    <div class="ctl"><div data-a="play">▶ / ❚❚</div><div data-a="back">−5 s</div><div data-a="fwd">+5 s</div><div data-a="fs">Vollbild</div></div>
+  </div>
+</div>
+
+<div class="box">Video direkt in der Seite (&lt;video controls&gt;):<br>
+  <video id="nv" controls loop playsinline width="480" src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"></video>
+</div>
+
+<div class="box">Player im iframe von anderer Herkunft (wie bei Video-Hostern):<br>
+  <iframe id="xframe" width="480" height="300" allowfullscreen style="border:0"></iframe>
+</div>
+
+<div class="box" id="inner"><div style="height: 600px">Innerer Scroll-Bereich: Zeiger hierher, dann am Rand weiterdrücken.<br>↓↓↓<br><br><br><br><br><br><br><br>Ende innen</div></div>
+
+<div class="tall">Lange Seite: am unteren Rand weiterdrücken scrollt.</div>
+<p id="end">Ende der Seite</p>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  document.getElementById('from').textContent = params.get('from') ? '(von: ' + params.get('from') + ')' : '';
+  document.getElementById('ua').textContent = navigator.userAgent;
+  const visits = Number((document.cookie.match(/(?:^|; )visits=(\d+)/) || [])[1] || 0) + 1;
+  document.cookie = 'visits=' + visits + '; max-age=31536000; path=/';
+  document.getElementById('cookie').textContent = visits;
+  const ls = Number(localStorage.getItem('visits') || 0) + 1;
+  localStorage.setItem('visits', ls);
+  document.getElementById('ls').textContent = ls;
+  document.getElementById('hist').textContent = history.length;
+  document.getElementById('w').textContent = document.documentElement.clientWidth;
+  // 127.0.0.1 instead of localhost: a different origin, so the page cannot reach into the frame.
+  document.getElementById('xframe').src = location.protocol + '//127.0.0.1:' + location.port + '/player.html';
+  addEventListener('message', e => window.framePlayer = e.data);
+  const pv = document.getElementById('pv');
+  const pstate = document.getElementById('pstate');
+  document.querySelectorAll('.ctl div').forEach(d => d.addEventListener('click', () => {
+    const a = d.dataset.a;
+    if (a === 'play') pv.paused ? pv.play() : pv.pause();
+    if (a === 'back') pv.currentTime = Math.max(0, pv.currentTime - 5);
+    if (a === 'fwd') pv.currentTime += 5;
+    if (a === 'fs') document.getElementById('player').requestFullscreen();
+    pstate.textContent = 'Klick: ' + a;
+  }));
+  ['play', 'pause', 'seeked'].forEach(t => pv.addEventListener(t, () =>
+    pstate.textContent = t + ' @ ' + pv.currentTime.toFixed(1) + ' s'));
+  if (params.get('autopopup')) {
+    const out = document.getElementById('popup');
+    out.textContent = 'Popup in 3 s …';
+    setTimeout(() => {
+      window.open('?from=autopopup');
+      // window.open returns a window object even when the app refuses it, so check where we are instead.
+      out.textContent = 'Popup ohne Klick versucht. Bleibt diese Seite stehen, wurde es blockiert (ok).';
+    }, 3000);
+  }
+</script>
+</body>
+</html>

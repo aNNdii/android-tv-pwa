@@ -1,0 +1,14 @@
+# private config
+webapps.json
+banners/
+# domain list copy and its download temp files (mise run deploy)
+blocklist.txt
+blocklist.txt.*
+# build
+build/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+.idea/
+.DS_Store
